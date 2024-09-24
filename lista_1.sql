@@ -1,99 +1,311 @@
---Listas o nome do usuário e o nomes das suas contas
-SELECT usuario.nome, STRING_AGG(conta.nome_usuario, ', ') AS contas FROM usuario LEFT JOIN conta ON conta.usuario_id = usuario.id GROUP BY usuario.id;
+-- Procedure para verificar se um participante é maior de idade:
+CREATE OR REPLACE PROCEDURE verificar_maioridade_participante(id_aux integer) AS 
+$$
+    DECLARE
+        idade integer; 
+    BEGIN
+        SELECT EXTRACT(YEAR FROM AGE(data_nascimento)) INTO idade
+        FROM participante where id = id_aux;
+        IF (idade >= 18) THEN
+            RAISE NOTICE 'PARTICIPANTE MAIOR DE IDADE';
+        ELSE
+            RAISE NOTICE 'PARTICIPANTE MENOR DE IDADE';
+        END IF;
+    END; 
+$$
+LANGUAGE 'plpgsql';
 
--- Listas as publicações e seus arquivos
-SELECT publicacao.texto, STRING_AGG(arquivo.arquivo, ', ') AS arquivo FROM publicacao LEFT JOIN arquivo ON arquivo.publicacao_id = publicacao.id GROUP BY publicacao.id;
+-- Procedure para atualizar o nome de um evento com tratamento de exceção:
+CREATE OR REPLACE PROCEDURE atualizar_nome_evento_com_excecao(evento_id_aux integer, novo_nome character varying(150)) AS 
+$$
+    BEGIN
+        IF (evento_id_aux > 0) THEN
+            IF EXISTS(SELECT * FROM evento where id = evento_id_aux) THEN
+                UPDATE evento SET nome = novo_nome where id = evento_id_aux;
+                RAISE NOTICE 'EVENTO ATUALIZADO COM SUCESSO';
+            ELSE
+                RAISE NOTICE 'EVENTO INEXISTENTE';
+            END IF;
+        ELSE
+            RAISE NOTICE 'PK DE EVENTO NAO PODE SER NEGATIVA';
+        END IF;
+    EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE 'ERRO NA ATUALIZACAO DO EVENTO';
+    END;
+$$ 
+LANGUAGE 'plpgsql';
 
--- Listar as publicações e seus comentários
-SELECT publicacao.texto, STRING_AGG(comentario.texto, ', ') AS comentario FROM publicacao LEFT JOIN comentario ON comentario.publicacao_id = publicacao.id GROUP BY publicacao.id;
+-- Function para verificar se um desejo está dentro de um valor limite:
+CREATE OR REPLACE FUNCTION verifica_limite(desejo_id_aux integer, valor_limite money) RETURNS BOOLEAN AS 
+$$
+DECLARE
+    valor_desejo money;
+BEGIN
+    IF EXISTS(SELECT * FROM desejo where id = desejo_id_aux) THEN    
+        SELECT valor_medio INTO valor_desejo FROM desejo where id = desejo_id_aux;
+        RAISE NOTICE '% <= %', valor_desejo, valor_limite;        
+        IF CAST(valor_desejo AS NUMERIC(10,2)) <= CAST(valor_limite AS NUMERIC(10,2)) THEN
+            RETURN TRUE;
+        ELSE
+            RETURN FALSE;
+        END IF;
+   ELSE
+        RAISE NOTICE 'DESEJO INEXISTENTE';
+        RETURN FALSE; 
+   END IF;   
+END;
+$$ 
+LANGUAGE 'plpgsql';
 
--- Listar somente publicações com comentários
-SELECT publicacao.texto FROM publicacao INNER JOIN comentario ON comentario.publicacao_id = publicacao.id;
+-- Procedure para listar todos os participantes com idade acima de um valor específico:
+CREATE OR REPLACE PROCEDURE listar_participantes_maiores_de(idade_limite integer) AS
+$$
+DECLARE
+    rec RECORD;
+BEGIN
+    FOR rec IN SELECT * FROM participante where EXTRACT(YEAR FROM AGE(data_nascimento)) >= idade_limite LOOP
+        RAISE NOTICE '%: %', rec.nome, rec.data_nascimento;    
+    END LOOP;    
+END;
+$$ 
+LANGUAGE 'plpgsql';
 
--- Retornar a quantidade de contas por usuário
-SELECT usuario.nome, count(conta.*) AS quantidade FROM usuario LEFT JOIN conta ON conta.usuario_id = usuario.id GROUP BY usuario.id;
+-- Function para verificar se um participante tem desejos cadastrados:
+CREATE OR REPLACE FUNCTION verifica_participante_desejos(participante_id_aux integer) RETURNS BOOLEAN AS
+$$
+BEGIN
+    IF EXISTS(SELECT * FROM desejo where participante_id = participante_id_aux) THEN
+        
+        RETURN TRUE;
+    END IF;
+    RETURN FALSE;
+END;
+$$ 
+LANGUAGE 'plpgsql';
 
--- Retornar a quantidade de publicações por usuário
-SELECT usuario.nome, count(conta_publicacao.*) AS quantidade  FROM usuario LEFT JOIN conta ON conta.usuario_id = usuario.id LEFT JOIN conta_publicacao ON conta_publicacao.conta_id = conta.id GROUP BY usuario.id;
+-- Procedure para listar todos os eventos criados após uma data específica:
+CREATE OR REPLACE PROCEDURE listar_eventos_pos_data(data_aux date) AS $$
+DECLARE
+    rec RECORD;
+BEGIN
+    FOR rec IN SELECT * FROM evento where cast(data_hora as date) > data_aux LOOP
+        RAISE NOTICE '%:%', rec.id, rec.data_hora;
+    END LOOP;
+END;
+$$ LANGUAGE 'plpgsql';
 
--- Retornar as publicações com mais comentários
-SELECT publicacao.texto, count(comentario.*) AS quantidade FROM publicacao LEFT JOIN comentario ON comentario.publicacao_id = publicacao.id GROUP BY publicacao.id ORDER BY quantidade DESC;
+-- Function para calcular a diferença de idade entre dois participantes:
+CREATE OR REPLACE FUNCTION diferenca(participante_id_aux1 integer, participante_id_aux2 integer) RETURNS integer AS
+$$
+DECLARE
+    idade_aux1 integer := 0;
+    idade_aux2 integer := 0;
+BEGIN
+    IF EXISTS(SELECT * FROM participante where id = participante_id_aux1) AND EXISTS(SELECT * FROM participante where id = participante_id_aux2) THEN
+        SELECT EXTRACT(YEAR FROM AGE(data_nascimento)) INTO idade_aux1 FROM participante where id = participante_id_aux1;
+        SELECT EXTRACT(YEAR FROM AGE(data_nascimento)) INTO idade_aux2 FROM participante where id = participante_id_aux2;
+        RETURN abs(idade_aux2 - idade_aux1);
+   ELSE
+        RAISE NOTICE 'ALGUM (OU ambos) PARTICIPANTE(S) NAO EXISTE(M)';
+   END IF;
+   RETURN 0;
+END;
+$$ 
+LANGUAGE 'plpgsql';
 
--- Retornar publicações que não tem comentários
-SELECT publicacao.texto FROM publicacao LEFT JOIN comentario ON comentario.publicacao_id = publicacao.id WHERE comentario.id IS NULL;
+-- Function para listar todos os participantes de um evento:
+CREATE OR REPLACE FUNCTION listar_participantes_evento(id_evento integer) RETURNS TABLE(nome_participante VARCHAR(100)) AS
+$$
+    BEGIN
+        RETURN QUERY(SELECT participante.nome FROM evento_participante INNER JOIN participante ON participante.id = evento_participante.participante_id WHERE evento_participante.evento_id = id_evento);
+    END;
+$$
+LANGUAGE 'plpgsql';
 
--- Retornar somente usuários que possuem um única conta
-SELECT usuario.nome FROM usuario LEFT JOIN conta ON conta.usuario_id = usuario.id GROUP BY usuario.id HAVING count(conta.*) = 1;
+-- Function para listar todos os desejos de um participante:
+CREATE OR REPLACE FUNCTION listar_desejos_participante(id_participante integer) RETURNS TABLE(descricao_desejo TEXT, valor_medio money) AS
+$$
+    BEGIN
+        RETURN QUERY(SELECT desejo.descricao, desejo.valor_medio FROM desejo WHERE desejo.participante_id = id_participante);
+    END;
+$$
+LANGUAGE 'plpgsql';
 
--- Retornar usuários com mais de uma conta sob sua responsabilidade
-SELECT usuario.nome FROM usuario LEFT JOIN conta ON conta.usuario_id = usuario.id GROUP BY usuario.id HAVING count(conta.*) > 1;
+-- Function para listar todos os eventos de um participante:
+CREATE OR REPLACE FUNCTION listar_eventos_participante(id_participante integer) RETURNS TABLE(nome_evento VARCHAR(100)) AS
+$$
+    BEGIN
+        RETURN QUERY(SELECT evento.nome FROM evento_participante INNER JOIN evento ON evento.id = evento_participante.evento_id WHERE evento_participante.participante_id = id_participante);
+    END;
+$$
+LANGUAGE 'plpgsql';
 
--- Retornar publicações sem arquivos adicionais (Sem registros na tabela de arquivo)
-SELECT publicacao.texto FROM publicacao LEFT JOIN arquivo ON arquivo.publicacao_id = publicacao.id GROUP BY publicacao.id HAVING count(arquivo.*) = 0;
+-- Function para verificar se um participante está em um evento:
+CREATE OR REPLACE FUNCTION participante_esta_em_evento(id_participante integer, id_evento integer) RETURNS BOOLEAN AS
+$$
+    BEGIN
+        RETURN EXISTS(SELECT id FROM evento_participante WHERE evento_id = id_evento AND id_participante = participante_id);
+    END;
+$$
+LANGUAGE 'plpgsql';
 
--- Retornar somente publicações compartilhadas por mais de uma conta
-SELECT publicacao.texto FROM publicacao LEFT JOIN conta_publicacao ON conta_publicacao.publicacao_id = publicacao.id GROUP BY publicacao.id HAVING count(conta_publicacao.*) > 1;
+-- Function para obter o valor médio total dos desejos de um participante:
+CREATE OR REPLACE FUNCTION media_desejos_participante(id_participante integer) RETURNS DECIMAL AS
+$$
+    BEGIN
+        RETURN (SELECT AVG(CAST(valor_medio AS DECIMAL)) AS media FROM desejo WHERE desejo.participante_id = id_participante);
+    END;
+$$
+LANGUAGE 'plpgsql';
 
--- Retornar usuários que ainda não criaram nenhuma publicação
-SELECT usuario.nome FROM usuario LEFT JOIN conta ON conta.usuario_id = usuario.id LEFT JOIN conta_publicacao ON conta_publicacao.conta_id = conta.id WHERE conta_publicacao.publicacao_id IS NULL GROUP BY usuario.id;
+-- Procedure para adicionar múltiplos participantes a um evento usando loop:
+CREATE OR REPLACE PROCEDURE adicionar_participantes(id_participantes int[], evento_id_aux int) AS
+$$
+    DECLARE
+        id_participante int;
+    BEGIN
+        FOREACH id_participante IN ARRAY id_participantes LOOP
+            IF EXISTS (SELECT 1 FROM participante WHERE participante.id = id_participante) THEN
+                IF EXISTS (SELECT 1 FROM evento WHERE evento.id = evento_id_aux) THEN
+                    IF NOT EXISTS (SELECT 1 FROM evento_participante WHERE evento_participante.evento_id = evento_id_aux AND evento_participante.participante_id = id_participante) THEN
+                        INSERT INTO evento_participante(evento_id, participante_id) VALUES (evento_id_aux, id_participante);
+                    ELSE 
+                        RAISE NOTICE 'PARTICIPANTE % JA PRESENTE NO EVENTO', id_participante;
+                    END IF;
+                ELSE
+                    RAISE NOTICE 'EVENTO NAO EXISTE';
+                END IF;
+            ELSE
+                RAISE NOTICE 'PARTICIPANTE % NAO EXISTE', id_participante;
+            END IF;
+        END LOOP; 
+    END;
+$$
+LANGUAGE 'plpgsql';
 
--- Retornar usuários que possuem só publicações sem comentários
-SELECT publicacao.texto FROM publicacao LEFT JOIN comentario ON comentario.publicacao_id = publicacao.id GROUP BY publicacao.id HAVING count(comentario.*) = 0;
+-- Function para contar o número de participantes em um evento:
+CREATE OR REPLACE FUNCTION conta_participantes_evento(id_evento integer) RETURNS int AS
+$$
+    BEGIN
+        RETURN (SELECT COUNT(id) FROM evento_participante WHERE evento_participante.evento_id = id_evento);
+    END;
+$$
+LANGUAGE 'plpgsql';
 
--- Retornar a conta que mais realizou comentários
-SELECT conta.nome_usuario FROM conta LEFT JOIN comentario ON comentario.conta_id = conta.id GROUP BY conta.id HAVING count(comentario.*) = (SELECT count(comentario.*) AS quantidade FROM conta LEFT JOIN comentario ON comentario.conta_id = conta.id GROUP BY conta.id ORDER BY quantidade DESC LIMIT 1);
+-- Procedure para atualizar o valor médio de todos os desejos de um participante usando loop:
+-- Function para verificar se um desejo excede um valor específico:
+CREATE OR REPLACE FUNCTION desejo_excede_valor(id_desejo integer, valor_maximo DECIMAL) RETURNS BOOLEAN AS
+$$
+    DECLARE
+        valor_desejo money := (SELECT valor_medio FROM desejo WHERE desejo.id = id_desejo);
+    BEGIN
+        IF (CAST(valor_desejo AS DECIMAL) > valor_maximo) THEN
+            RETURN TRUE;
+        ELSE    
+            RETURN FALSE;
+        END IF;
+    END;
+$$
+LANGUAGE 'plpgsql';
 
--- Retornar o nome do usuário e o nome da conta da última conta criada
-SELECT usuario.nome, conta.nome_usuario FROM usuario LEFT JOIN conta ON conta.usuario_id = usuario.id WHERE conta.id = (SELECT conta.id FROM conta WHERE conta.usuario_id = usuario.id ORDER BY data_hora_criacao DESC LIMIT 1);
+-- Procedure para adicionar múltiplos desejos para um participante usando loop:
+-- Validação e Máscara de CPF   
+CREATE OR REPLACE FUNCTION cpf_valido(cpf TEXT) RETURNS TEXT AS
+$$
+    DECLARE
+        soma INT;
+        digito1 INT;
+        digito2 INT;
+        i INT;
+    BEGIN
+        IF (NOT regexp_like(cep, '\d{11}')) THEN
+            RAISE NOTICE 'CPF INVALIDO';
+            RETURN '';
+        END IF;
 
--- Retornar usuário(s) que possue(m) a maior quantidade de contas
-SELECT usuario.nome FROM usuario LEFT JOIN conta ON conta.usuario_id = usuario.id GROUP BY usuario.id HAVING count(conta.*) = (SELECT count(conta.*) AS quantidade FROM usuario LEFT JOIN conta ON conta.usuario_id = usuario.id GROUP BY usuario.id ORDER BY quantidade DESC LIMIT 1);
+        IF (cpf = repeat(substr(cpf, 1, 1), 11)) THEN
+            RAISE NOTICE 'CPF INVALIDO';
+            RETURN '';
+        END IF;
 
--- Retornar usuário(s) que possue(m) a menor quantidade de contas
-SELECT usuario.nome FROM usuario LEFT JOIN conta ON conta.usuario_id = usuario.id GROUP BY usuario.id HAVING count(conta.*) = (SELECT count(conta.*) AS quantidade FROM usuario LEFT JOIN conta ON conta.usuario_id = usuario.id GROUP BY usuario.id ORDER BY quantidade ASC LIMIT 1);
+        soma := 0;
+        FOR i IN 1..9 LOOP
+            soma := soma + (CAST(substr(cpf, i, 1) AS INT) * (11 - i));
+        END LOOP;
 
--- Retornar comentários realizados durante a última semana (últimos 7 dias)
-SELECT comentario.texto FROM comentario WHERE comentario.data_hora > (now() - INTERVAL '7 DAYS');
+        digito1 := (soma * 10) % 11;
+        IF (digito1 = 10) THEN
+            digito1 := 0;
+        END IF;
 
--- Retornar as contas do(s) usuário(s) mais velho(s)
-SELECT usuario.nome, STRING_AGG(conta.nome_usuario, ', ') AS contas FROM usuario LEFT JOIN conta ON conta.usuario_id = usuario.id WHERE usuario.data_nascimento IN ((SELECT usuario.data_nascimento FROM usuario ORDER BY usuario.data_nascimento ASC LIMIT 1)) GROUP BY usuario.id;
+        soma := 0;
+        FOR i IN 1..10 LOOP
+            soma := soma + (CAST(substr(cpf, i, 1) AS INT) * (12 - i));
+        END LOOP;
 
--- Listar nos primeiros resultados usuários sem conta acima dos usuários com conta
-SELECT usuario.nome FROM usuario LEFT JOIN conta ON conta.usuario_id = usuario.id GROUP BY usuario.id ORDER BY count(conta.*) ASC;
+        digito2 := (soma * 10) % 11;
+        IF (digito2 = 10) THEN
+            digito2 := 0;
+        END IF;
 
--- Quantidade total de comentários dado um intervalo de datas
-SELECT count(*) AS comentarios FROM comentario WHERE comentario.data_hora BETWEEN '2020-01-01' AND now();
+        IF (digito1 <> CAST(substr(cpf, 10, 1) AS INT) OR
+        digito2 <> CAST(substr(cpf, 11, 1) AS INT)) THEN
+            RAISE NOTICE 'CPF INVALIDO';
+            RETURN '';
+        END IF;
 
--- Selecione publicações que tenham mais de um arquivo (fora o obrigatório)
-SELECT publicacao.texto FROM publicacao LEFT JOIN arquivo ON arquivo.publicacao_id = publicacao.id GROUP BY publicacao.id HAVING count(arquivo.*) > 1;
+        RETURN format('%s.%s.%s-%s',
+                    substr(cpf, 1, 3),
+                    substr(cpf, 4, 3),
+                    substr(cpf, 7, 3),
+                    substr(cpf, 10, 2));
+    END;
+$$ 
+LANGUAGE 'plpgsql';
 
--- Publicação com maior texto (maior número de caracteres)
-SELECT publicacao.texto, LENGTH(publicacao.texto) AS tamanho_texto FROM publicacao ORDER BY LENGTH(publicacao.texto) DESC LIMIT 1;
+-- Máscara de Telefone
+CREATE OR REPLACE FUNCTION mascara_telefone(telefone TEXT) RETURNS TEXT AS
+$$
+    BEGIN
+        IF (NOT regexp_like(telefone, '\d{8}|\d{9}|\d{11}|\d{13}')) THEN
+            RAISE NOTICE 'TELEFONE INVALIDO';
+            RETURN '';
+        ELSIF (LENGTH(telefone) = 8) THEN
+            RETURN FORMAT('9%s-%s',
+                    substr(telefone, 1, 4),
+                    substr(telefone, 5, 4));
+        ELSIF (LENGTH(telefone) = 9) THEN
+            RETURN FORMAT('%s-%s',
+                    substr(telefone, 1, 5),
+                    substr(telefone, 6, 4));
+        ELSIF (LENGTH(telefone) = 11) THEN
+            RETURN FORMAT('(%s) %s-%s',
+                    substr(telefone, 1, 2),
+                    substr(telefone, 3, 5),
+                    substr(telefone, 8, 4));
+        ELSE
+            RETURN FORMAT('+%s (%s) %s-%s',
+                    substr(telefone, 1, 2),
+                    substr(telefone, 3, 2),
+                    substr(telefone, 5, 5),
+                    substr(telefone, 10, 4));
+        END IF;
+    END;
+$$ 
+LANGUAGE 'plpgsql';
 
--- Publicações com maior número de caracteres (nesta questão cuidar a questão do empate, ou seja, 2 ou mais publicações terem o texto com o mesma quantidade de caracteres)
-SELECT publicacao.texto, LENGTH(publicacao.texto) AS tamanho_texto FROM publicacao WHERE LENGTH(publicacao.texto) = (SELECT LENGTH(publicacao.texto) FROM publicacao ORDER BY LENGTH(publicacao.texto) DESC LIMIT 1);
+-- Máscara de Cep. Obs: Validar CEP é possível?
+CREATE OR REPLACE FUNCTION mascara_cep(cep TEXT) RETURNS TEXT AS
+$$
+    BEGIN
+        IF (NOT regexp_like(cep, '\d{8}')) THEN 
+            RAISE NOTICE 'CEP INVALIDO';
+            RETURN '';
+        END IF;
 
--- Usuário que mais publicou em um dado intervalo de tempo
-SELECT usuario.nome, count(conta_publicacao.*) AS quantidade FROM usuario LEFT JOIN conta ON conta.usuario_id = usuario.id LEFT JOIN conta_publicacao ON conta_publicacao.conta_id = conta.id GROUP BY usuario.id HAVING count(conta_publicacao.*) = (SELECT count(conta_publicacao.*) FROM usuario LEFT JOIN conta ON conta.usuario_id = usuario.id LEFT JOIN conta_publicacao ON conta_publicacao.conta_id = conta.id GROUP BY usuario.id ORDER BY count(conta_publicacao.*) DESC LIMIT 1);
-
--- Conta que mais publicou
-SELECT conta.nome_usuario, count(conta_publicacao.*)-1 AS quantidade FROM conta LEFT JOIN conta_publicacao ON conta_publicacao.conta_id = conta.id GROUP BY conta.id HAVING count(conta_publicacao.*) = (SELECT count(conta_publicacao.*) FROM conta LEFT JOIN conta_publicacao ON conta_publicacao.conta_id = conta.id GROUP BY conta.id ORDER BY count(conta_publicacao.*) DESC LIMIT 1);
-
--- Conta que mais compartilhou publicações
-SELECT conta.nome_usuario, count(conta_publicacao.*) AS quantidade FROM conta LEFT JOIN conta_publicacao ON conta_publicacao.conta_id = conta.id WHERE conta.id != (SELECT conta_publicacao_primeira.conta_id FROM conta_publicacao AS conta_publicacao_primeira WHERE conta_publicacao_primeira.publicacao_id = conta_publicacao.publicacao_id GROUP BY conta_publicacao_primeira.conta_id LIMIT 1) GROUP BY conta.id HAVING count(conta_publicacao.*) = (SELECT count(conta_publicacao.*) FROM conta LEFT JOIN conta_publicacao ON conta_publicacao.conta_id = conta.id WHERE conta.id != ((SELECT conta_publicacao_primeira.conta_id FROM conta_publicacao AS conta_publicacao_primeira WHERE conta_publicacao_primeira.publicacao_id = conta_publicacao.publicacao_id GROUP BY conta_publicacao_primeira.conta_id LIMIT 1)) GROUP BY conta.id ORDER BY count(conta_publicacao.*) DESC LIMIT 1);
-
--- Publicação com mais arquivos
-SELECT publicacao.texto, count(arquivo.*) AS quantidade FROM publicacao LEFT JOIN arquivo ON arquivo.publicacao_id = publicacao.id GROUP BY publicacao.id HAVING count(arquivo.*) = ((SELECT count(arquivo.*) FROM publicacao LEFT JOIN arquivo ON arquivo.publicacao_id = publicacao.id GROUP BY publicacao.id ORDER BY count(arquivo.*) DESC LIMIT 1));
-
--- Alterar a tabela conta_publicação e adicionar a data e hora em que uma publicação foi compartilhada
-ALTER TABLE conta_publicacao DROP IF EXISTS data_hora;
-ALTER TABLE conta_publicacao ADD data_hora TIMESTAMP NOT NULL DEFAULT '1900-01-01 00:00:00';
-
--- Usuário que mais realizou comentários
-SELECT usuario.nome, count(comentario.*) AS quantidade FROM usuario LEFT JOIN conta ON conta.usuario_id = usuario.id LEFT JOIN comentario ON comentario.conta_id = conta.id GROUP BY usuario.id HAVING count(comentario.*) = (SELECT count(comentario.*) FROM usuario LEFT JOIN conta ON conta.usuario_id = usuario.id LEFT JOIN comentario ON comentario.conta_id = conta.id GROUP BY usuario.id ORDER BY count(comentario.*) DESC LIMIT 1);
-
--- Conta que mais realizou comentários
-SELECT conta.nome_usuario, count(comentario.*) AS quantidade FROM conta LEFT JOIN comentario ON comentario.conta_id = conta.id GROUP BY conta.id HAVING count(comentario.*) = (SELECT count(comentario.*) FROM conta LEFT JOIN comentario ON comentario.conta_id = conta.id GROUP BY conta.id ORDER BY count(comentario.*) DESC LIMIT 1);
-
--- Formatar o retorno da data e hora
-SELECT conta.nome_usuario, publicacao.texto, TO_CHAR(conta_publicacao.data_hora, 'dd/mm/yyyy hh:mi:ss') AS data FROM conta_publicacao INNER JOIN conta ON conta.id = conta_publicacao.conta_id INNER JOIN publicacao ON publicacao.id = conta_publicacao.publicacao_id;  
+        RETURN FORMAT('%s-%s',
+                substr(cep, 1, 5),
+                substr(cep, 6, 3));
+    END;
+$$ 
+LANGUAGE 'plpgsql';
