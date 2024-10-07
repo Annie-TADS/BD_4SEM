@@ -193,6 +193,17 @@ $$
 LANGUAGE 'plpgsql';
 
 -- Procedure para atualizar o valor médio de todos os desejos de um participante usando loop:
+CREATE OR REPLACE PROCEDURE atualizar_valor_medio(id_participante int, novo_valor money) AS
+$$
+    DECLARE 
+        d RECORD;
+    BEGIN FOR d IN SELECT * FROM desejo WHERE participante_id = id_participante 
+        LOOP
+            UPDATE desejo SET valor_medio = novo_valor WHERE id = d.id;
+        END LOOP;
+    END;
+$$ LANGUAGE 'plpsql';
+
 -- Function para verificar se um desejo excede um valor específico:
 CREATE OR REPLACE FUNCTION desejo_excede_valor(id_desejo integer, valor_maximo DECIMAL) RETURNS BOOLEAN AS
 $$
@@ -209,6 +220,25 @@ $$
 LANGUAGE 'plpgsql';
 
 -- Procedure para adicionar múltiplos desejos para um participante usando loop:
+CREATE OR REPLACE PROCEDURE adicionar_multiplos_desejos(id_participante integer, Array[vet_descricao TEXT], Array[vet_valor_medio money]) AS
+$$
+BEFORE
+    pos integer := 0;
+BEGIN
+    BEGIN
+        IF ARRAY_LENGTH(vet_descricao, 1) = ARRAY_LENGTH(vet_valor_medio,1) THEN
+            pos := 0;
+            WHILE pos < ARRAY_LENGTH(vet_descricao, 1) LOOP
+                INSERT INTO desejo(participante_id, descricao, valor_medio) VALUES (id_participante, vet_descricao[pos+1], vet_valor_medio[pos+1]);
+                pos := pos + 1;
+            END LOOP
+        END IF;
+    EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE 'VetDesc tem que ter o mesmo tamanho de VetValorMedio';
+    END;
+END;
+$$ LANGUAGE 'plpsql';
+
 -- Validação e Máscara de CPF   
 CREATE OR REPLACE FUNCTION cpf_valido(cpf TEXT) RETURNS TEXT AS
 $$
